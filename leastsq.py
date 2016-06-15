@@ -78,14 +78,13 @@ def residuals(p, y, injectEnergy, distance, l, dz, Ez, x):
     err =  np.array(y) - [energyGain(injectEnergy, c, phase_in + e, distance, l, dz, Ez) + offset for e in x]
     return err
 
-def getTWPhase(cav_phases, bpm_phases, injectEnergy, distance, twissWinPhase, fieldName, step, start_phase, slope):
+def getTWPhase(cav_phases, bpm_phases, injectEnergy, distance, twissWinPhase, fieldName, step, start_phase, slope, EpeakFactor):
     data = np.loadtxt(fieldName)
     z = np.linspace(data[0, 0], data[-1, 0], 3000)
     f = interpolate.interp1d(data[:, 0], data[:, 3], kind='slinear')
     Ez = f(z)
     l = len(z)
     dz = (data[-1, 0] - data[0, 0]) / 3000
-
     fitStep = step * slope
     fitPointNum = len(cav_phases)
 
@@ -101,9 +100,9 @@ def getTWPhase(cav_phases, bpm_phases, injectEnergy, distance, twissWinPhase, fi
     y = [energyGain(injectEnergy, plsq[0][0], plsq[0][1] + e, distance, l, dz, Ez) for e in x]
 
     rfPhase = (plsq[0][1] - xopt) * 180 / C.pi / slope + start_phase
-    exit_energy = calTraceWinPhase(injectEnergy, plsq[0][0], xopt, distance, l, dz, Ez)[2] + injectEnergy
+    exit_energy = calTraceWinPhase(injectEnergy, plsq[0][0], xopt, distance, l, dz, Ez)[2]
     rfPhase = phaseWrappingFunction(rfPhase, slope)
-    return rfPhase, exit_energy, plsq[0][0] * 25, error, cav_phases, y + plsq[0][2]
+    return rfPhase, exit_energy, plsq[0][0] * EpeakFactor, error, cav_phases, y + plsq[0][2]
 
 def phaseWrappingFunction(inValue, slope):
     outValue = inValue

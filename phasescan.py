@@ -40,9 +40,8 @@ class WorkThread(CAThread):
         self.timeToPause.clear()
         self.pause = False
         self.mode = mode
-        print self.mode
 
-    def scan(self, index, cavity_pv):
+    def scan(self, index, cavity_pv, cavity_pv_readback):
         x = []
         y = []
         std_errors = []
@@ -51,6 +50,7 @@ class WorkThread(CAThread):
         wx.CallAfter(self.window.slider.SetRange, 0, self.last_phase - self.first_phase)
         self.cavity_pv = PV(cavity_pv)
         self.bpm_pv = PV(self.window.bpm_pv[index])
+        self.cav_readback = PV(cavity_pv_readback)
 
         first_phase = self.first_phase
 
@@ -61,8 +61,16 @@ class WorkThread(CAThread):
                 self.timeToPause.wait()
 
             wx.CallAfter(self.window.slider.SetValue, first_phase - self.first_phase)
-            self.cavity_pv.put(first_phase)
-            time.sleep(2)
+            if self.window.cavityList[index].startswith("buncher"):
+                while True:
+                    self.cavity_pv.put(first_phase)
+                    time.sleep(1)
+                    if self.cav_readback.get() and abs(int(self.cav_readback.get()) - int(first_phase)) < 5:
+                        break
+            else:
+                for i in range(3):
+                    self.cavity_pv.put(first_phase)
+                    time.sleep(1)
 
             bpm_phases = []
             for i in range(self.num_read):
@@ -85,27 +93,28 @@ class WorkThread(CAThread):
         f.close()
         return x, y, std_errors
 
-    def fit(self, distance, twPhase, fieldName, step, slope, x, y):
-
-        rfPhase, energy_gain, amp, e, x_plot, y_plot = getTWPhase(x, y, self.Win, distance, twPhase, fieldName, step, self.first_phase, slope)
+    def fit(self, distance, twPhase, fieldName, step, slope, x, y, EpeakFactor):
+        
+        rfPhase, energy_gain, amp, e, x_plot, y_plot = getTWPhase(x, y, self.Win, distance, twPhase, fieldName, step, self.first_phase, slope, EpeakFactor)
         return rfPhase, energy_gain, amp, e, x_plot, y_plot
 
     def prepare_for_next(self, rfPhase, energy_gain, amp, x_plot, y_plot):
         self.Win += energy_gain
-        self.cavity_pv.put(rfPhase)
+        #self.cavity_pv.put(rfPhase)
         wx.CallAfter(self.window.display_frame.write_line, '%s\t%s\t%s' % (rfPhase, self.Win, amp))
         wx.CallAfter(self.window.updateGraph, self.window.fit_line, x_plot, y_plot)
 
-    def data_save(self, x, y, errors, distance, twPhase, fieldName, step, slope):
-        self.data_changed = True
+    def data_save(self, x, y, errors, distance, twPhase, fieldName, step, slope, EpeakFactor):
+        self.window.data_changed = True
         self.window.distance = distance
         self.window.twPhase = twPhase
         self.window.fieldName = fieldName
-        self.window.step = step
+        self.window.phaseStep = step
         self.window.slope = slope
         self.window.x = x
         self.window.y = y
         self.window.errors = errors
+        self.window.EpeakFactor = EpeakFactor
 
     def handle_error(self, index):
         wx.CallAfter(self.window.handle_error, index)
@@ -115,7 +124,14 @@ class WorkThread(CAThread):
         
         for i, cav in enumerate(self.window.cavity_set_phase[self.first_cavity_id:self.last_cavity_id + 1]):
             index = i + self.first_cavity_id
-            x, y, std_errors = self.scan(index, cav)
+            if self.window.cavityList[index].startswith("buncher"):
+                EpeakFactor = 600
+            else:
+                EpeakFactor = 25
+
+            cav_readback = self.window.cavity_get_phase[index]
+            print self.window.cavity_get_phase[index]
+            x, y, std_errors = self.scan(index, cav, cav_readback)
 
             distance = self.window.distance_cav_bpm[index]
             twPhase = self.window.synch_phases[index]
@@ -123,13 +139,13 @@ class WorkThread(CAThread):
             step = self.phase_step * C.pi / 180
             slope = self.window.slopes[index]
 
-            rfPhase, energy_gain, amp, e, x_plot, y_plot = self.fit(distance, twPhase, fieldName, step, slope, x, y)
+            rfPhase, energy_gain, amp, e, x_plot, y_plot = self.fit(distance, twPhase, fieldName, step, slope, x, y, EpeakFactor)
             if e < self.window.TOLERANCE:
                 self.prepare_for_next(rfPhase, energy_gain, amp, x_plot, y_plot)
                 if self.mode == 1:
                     wx.CallAfter(self.window.clear_graph)
                 else:
-                    self.data_save(x, y, std_errors, distance, twPhase, fieldName, step, slope)
+                    self.data_save(x, y, std_errors, distance, twPhase, fieldName, step, slope, EpeakFactor)
             else:
                 self.handle_error(index)
                 break
@@ -169,10 +185,11 @@ class DisplayFrame(wx.Frame):
 
 class MyFrame(wx.Frame):
     cavity_set_phase = ['LLRF:Buncher1:PHA_SET', 'LLRF:Buncher2:PHA_SET', 'SCRF:CAV1:PHASE:SETPOINT', 'SCRF:CAV2:PHASE:SETPOINT', 'SCRF:CAV3:PHASE:SETPOINT', 'SCRF:CAV4:PHASE:SETPOINT', 'SCRF:CAV5:PHASE:SETPOINT', 'SCRF:CAV6:PHASE:SETPOINT', 'LLRF:CM2_Cavity1:PHA_SET', 'LLRF:CM2_Cavity2:PHA_SET', 'LLRF:CM2_Cavity3:PHA_SET', 'LLRF:CM2_Cavity4:PHA_SET', 'LLRF:CM2_Cavity5:PHA_SET', 'LLRF:CM2_Cavity6:PHA_SET']
+    cavity_get_phase = ['LLRF:Buncher1:CAVITY_PHASE', 'LLRF:Buncher2:CAVITY_PHASE', 'SCRF:CAV1:PHASE:SETPOINT', 'SCRF:CAV2:PHASE:SETPOINT', 'SCRF:CAV3:PHASE:SETPOINT', 'SCRF:CAV4:PHASE:SETPOINT', 'SCRF:CAV5:PHASE:SETPOINT', 'SCRF:CAV6:PHASE:SETPOINT', 'LLRF:CM2_Cavity1:PHA_SET', 'LLRF:CM2_Cavity2:PHA_SET', 'LLRF:CM2_Cavity3:PHA_SET', 'LLRF:CM2_Cavity4:PHA_SET', 'LLRF:CM2_Cavity5:PHA_SET', 'LLRF:CM2_Cavity6:PHA_SET']
     bpm_pv = ['Bpm:2-P11', 'Bpm:5-P11', 'Bpm:6-P11', 'Bpm:7-P11', 'Bpm:8-P11', 'Bpm:9-P11', 'Bpm:10-P11', 'Bpm:11-P11', 'Bpm:12-P11', 'Bpm:13-P11', 'Bpm:14-P11', 'Bpm:15-P11', 'Bpm:16-P11', 'Bpm:17-P11']
     distance_cav_bpm = [0.1, 0.15, 0.1026, 0.1026, 0.1026, 0.1026, 0.1026, 0.1026, 0.1026, 0.1026, 0.1026, 0.1026, 0.1026, 0.1026]
     field_names = ['buncher_field.txt', 'buncher_field.txt', 'Exyz.txt', 'Exyz.txt', 'Exyz.txt', 'Exyz.txt', 'Exyz.txt', 'Exyz.txt', 'Exyz.txt', 'Exyz.txt', 'Exyz.txt', 'Exyz.txt', 'Exyz.txt', 'Exyz.txt']
-    synch_phases = [-90, -90, -25, -25, -25, -20, -20, -20, -20, -20, -20, -20, -20, -20] 
+    synch_phases = [-90, -90, -90, -90, -90, -90, -90, -90, -90, -90, -90, -90, -90, -90] 
     slopes = [1, 1, 0.95, 0.95, 0.95, 0.95, 0.95, 0.95, 1, 1, 1, 1, 1, 1]  
     wildcard = "Phase files (*.txt)|*.txt|All files (*.*)|*.*"
     TOLERANCE = 100
@@ -205,10 +222,10 @@ class MyFrame(wx.Frame):
         self.start_cavity = wx.ComboBox(self.panel, -1, 'buncher1', wx.DefaultPosition, wx.DefaultSize, self.cavityList, wx.CB_DROPDOWN)
         self.end_cavity = wx.ComboBox(self.panel, -1, 'hwr12', wx.DefaultPosition, wx.DefaultSize, self.cavityList, wx.CB_DROPDOWN)
 
-        self.begin = wx.TextCtrl(self.panel, -1, '-180', size=(50, -1))
+        self.begin = wx.TextCtrl(self.panel, -1, '-178', size=(50, -1))
         self.current = wx.TextCtrl(self.panel, -1, '0', size=(50, -1))
         self.end = wx.TextCtrl(self.panel, -1, '180', size=(50, -1))
-        self.slider = wx.Slider(self.panel, -1, 0, -180, 180, style=wx.SL_HORIZONTAL)
+        self.slider = wx.Slider(self.panel, -1, 0, -178, 180, style=wx.SL_HORIZONTAL)
 
         self.stepLabel = wx.StaticText(self.panel, -1, 'SCAN with step:')
         self.step = wx.TextCtrl(self.panel, -1, '10', size=(50, -1))
@@ -308,7 +325,7 @@ class MyFrame(wx.Frame):
     def save_file(self, filename):
         if filename:
             f = open(filename, 'w')
-            f.write('%s\t%s\t%s\t%s\t%s\n' % (self.distance, self.twPhase, self.fieldName, self.step, self.slope))
+            f.write('%s\t%s\t%s\t%s\t%s\t%s\n' % (self.distance, self.twPhase, self.fieldName, self.phaseStep, self.slope, self.EpeakFactor))
             for e in zip(self.x, self.y, self.errors):
                 f.write('%s\t%s\t%s\n' % e)
             f.close()
@@ -319,17 +336,21 @@ class MyFrame(wx.Frame):
             f = open(filename, 'r')
             data = f.readlines()
             f.close()
-            distance, twPhase, fieldName, step, slope = data[0].strip().split()
+            distance, twPhase, fieldName, step, slope, EpeakFactor = data[0].strip().split()
             x = []
             y = []
             for line in data[1:]:
                 line_data = line.strip().split()
-                x.append(line_data[0])
-                y.append(line_data[1])
+                x.append(float(line_data[0]))
+                y.append(float(line_data[1]))
+   
+            Win = float(self.injectEnergy.GetValue())
+            first_phase = float(self.begin.GetValue())
 
-            rfPhase, energy_gain, amp, e, x_plot, y_plot = getTWPhase(x, y, Win, distance, twPhase, fieldName, step, self.first_phase, slope)
+            rfPhase, energy_gain, amp, e, x_plot, y_plot = getTWPhase(x, y, Win, float(distance), float(twPhase), fieldName, float(step), first_phase, float(slope), float(EpeakFactor))
             self.updateGraph(self.scan_line, x, y)
             self.updateGraph(self.fit_line, x_plot, y_plot)
+            print rfPhase, energy_gain, amp
 
     def open(self, event):
         dlg = wx.FileDialog(self, "Open phase file...", os.getcwd(), style=wx.OPEN, wildcard=self.wildcard)
