@@ -103,7 +103,7 @@ def getTWPhase(cav_phases, bpm_phases, injectEnergy, distance, twissWinPhase, fi
     rfPhase = (plsq[0][1] - xopt) * 180 / C.pi / slope + start_phase
     exit_energy = calTraceWinPhase(injectEnergy, plsq[0][0], xopt, distance, l, dz, Ez)[2] + injectEnergy
     rfPhase = phaseWrappingFunction(rfPhase, slope)
-    return rfPhase, exit_energy, plsq[0][0], error, cav_phases, y + plsq[0][2]
+    return rfPhase, exit_energy, plsq[0][0] * 25, error, cav_phases, y + plsq[0][2]
 
 def phaseWrappingFunction(inValue, slope):
     outValue = inValue
